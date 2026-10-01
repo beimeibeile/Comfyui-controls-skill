@@ -1,5 +1,5 @@
----
-name: Comfyui-controls-skill
+﻿---
+name: comfyui-controls-skill
 version: 1.0.0
 description: |
   ComfyUI 智能管理与控制技能。核心能力：工作流智能管理、模型自动进化、批量出产品、
