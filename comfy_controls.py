@@ -13,13 +13,12 @@ import os
 import sys
 from typing import Dict, List, Optional, Any
 
-# 添加能力模块路径
+# 添加能力模块路径（capabilities目录作为包根）
 _cap_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capabilities")
-for sub in ["cap_api_wrapper", "cap_workflow_manager", "cap_model_manager",
-            "cap_batch_generator", "cap_quality_control", "cap_self_evolution"]:
-    sys.path.insert(0, os.path.join(_cap_dir, sub))
+if _cap_dir not in sys.path:
+    sys.path.insert(0, _cap_dir)
 
-from cap_api_wrapper.comfy_api import ComfyAPI
+from cap_api_wrapper.api import ComfyAPI
 from cap_workflow_manager.manager import WorkflowManager
 from cap_model_manager.manager import ModelManager
 from cap_batch_generator.generator import BatchGenerator

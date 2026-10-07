@@ -5,7 +5,7 @@ ComfyUI高级场景API
 import os
 import json
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from .comfy_client import ComfyClient, load_workflow_template
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "workflow_templates")
