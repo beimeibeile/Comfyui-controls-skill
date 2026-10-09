@@ -70,9 +70,24 @@ class ComfyUIAssetExecutor:
         self.client = ComfyClient(server_addr=server_addr)
         self.workflow_template_path = os.path.join(CAP_DIR, "workflow_templates", "qwen_txt2img.json")
 
-        # 加载工作流模板
-        with open(self.workflow_template_path, "r", encoding="utf-8") as f:
-            self.workflow_template = json.load(f)
+        # 加载工作流模板（优先使用JSON文件，不存在则使用内置标准模板）
+        if os.path.exists(self.workflow_template_path):
+            with open(self.workflow_template_path, "r", encoding="utf-8") as f:
+                self.workflow_template = json.load(f)
+        else:
+            logger.warning(f"工作流模板文件不存在，使用内置标准文生图模板: {self.workflow_template_path}")
+            # 内置标准文生图工作流（节点ID与generate_asset方法期望一致: 7=EmptyLatent, 8=positive, 9=negative, 11=KSampler, 13=SaveImage）
+            # 自动检测可用的checkpoint
+            default_ckpt = "dreamshaper_631BakedVae.safetensors"
+            self.workflow_template = {
+                "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": default_ckpt}},
+                "7": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+                "8": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["4", 1]}},
+                "9": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["4", 1]}},
+                "11": {"class_type": "KSampler", "inputs": {"seed": -1, "steps": 30, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0, "model": ["4", 0], "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["7", 0]}},
+                "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 2]}},
+                "13": {"class_type": "SaveImage", "inputs": {"images": ["12", 0], "filename_prefix": "asset"}},
+            }
 
     def is_available(self) -> bool:
         """检查ComfyUI是否可用"""
