@@ -1,6 +1,11 @@
 """
 MiniMax H3 视频生成工作流封装
-基于ComfyUI API，支持文生视频/图生视频/首尾帧生视频
+基于ComfyUI API，支持文生视频/图生视频/首尾帧生视频/参考驱动生成
+
+模型版本：
+- FL2VA：高质量版本，支持T2V/I2V/FL2V，视觉和音频质量最佳
+- Ref2VA：参考驱动版本，支持9图+3视频+3音频参考+唇形同步，画质略低
+- Hybrid：社区混合版，FL2VA画质+Ref2VA参考能力（如已下载）
 
 优化方案（RTX 3080 12GB可稳定运行）：
 - MiniMax H3 Mem Eff Sage Attention Patch（显存优化）
@@ -30,11 +35,47 @@ sys.path.insert(0, _THIS_DIR)
 from comfy_client import ComfyClient
 
 
+# ============ 模型版本定义 ============
+
+# FL2VA：高质量版本（First/Last to Video + Audio）
+# - 支持 T2V（纯文本）、I2V（首帧）、FL2V（首尾帧）
+# - 视觉和音频质量最佳
+# - 不支持多参考输入
+MODEL_FL2VA = "fl2va"
+
+# Ref2VA：参考驱动版本（Reference to Video + Audio）
+# - 支持 最多9张图像 + 3段视频 + 3段音频参考
+# - 支持唇形同步（lip-sync）
+# - 支持角色/动作/相机/声音参考迁移
+# - 原始输出画质略低于FL2VA
+MODEL_REF2VA = "ref2va"
+
+# Hybrid：社区混合版
+# - 合并FL2VA的高质量 + Ref2VA的参考支持
+# - 单一checkpoint，需单独下载
+MODEL_HYBRID = "hybrid"
+
+# 模型文件名映射（ComfyUI models/diffusion_models/ 目录下）
+MODEL_FILES = {
+    MODEL_FL2VA: "MiniMaxH3_fl2va.safetensors",
+    MODEL_REF2VA: "MiniMaxH3_ref2va.safetensors",
+    MODEL_HYBRID: "MiniMaxH3_hybrid.safetensors",
+}
+
+# 各版本支持的模式
+MODEL_MODES = {
+    MODEL_FL2VA: ["t2v", "i2v", "fl2v"],
+    MODEL_REF2VA: ["t2v", "i2v", "fl2v", "ref2v"],  # ref2v=参考驱动
+    MODEL_HYBRID: ["t2v", "i2v", "fl2v", "ref2v"],
+}
+
+
 # ============ 配置预设 ============
 
 @dataclass
 class H3OptimizationConfig:
     """H3优化配置"""
+    model_variant: str = MODEL_FL2VA       # 模型版本：fl2va/ref2va/hybrid
     use_mem_eff_attention: bool = True      # 显存高效注意力
     use_turbo_lora: bool = True              # 加速LoRA
     turbo_lora_name: str = "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
@@ -55,27 +96,43 @@ class H3OptimizationConfig:
 # 预设配置
 PRESETS = {
     "turbo_768p": H3OptimizationConfig(
+        model_variant=MODEL_FL2VA,
         use_turbo_lora=True,
         turbo_steps=4,
         cfg=1.0,
     ),
     "standard_768p": H3OptimizationConfig(
+        model_variant=MODEL_FL2VA,
         use_turbo_lora=False,
         standard_steps=20,
         cfg=6.0,
     ),
     "turbo_2k": H3OptimizationConfig(
+        model_variant=MODEL_FL2VA,
         use_turbo_lora=True,
         turbo_steps=4,
         cfg=1.0,
         vae_tile_size=512,
     ),
     "quality_2k": H3OptimizationConfig(
+        model_variant=MODEL_FL2VA,
         use_turbo_lora=False,
         standard_steps=30,
         cfg=6.0,
         vae_tile_size=256,
         vae_overlap=32,
+    ),
+    "ref2va_turbo": H3OptimizationConfig(
+        model_variant=MODEL_REF2VA,
+        use_turbo_lora=True,
+        turbo_steps=4,
+        cfg=1.0,
+    ),
+    "ref2va_standard": H3OptimizationConfig(
+        model_variant=MODEL_REF2VA,
+        use_turbo_lora=False,
+        standard_steps=20,
+        cfg=6.0,
     ),
 }
 
@@ -128,12 +185,15 @@ class MiniMaxH3WorkflowBuilder:
         """构建基础节点（模型/CLIP/VAE/优化）"""
         nodes = {}
 
+        # 根据版本选择模型文件
+        model_file = MODEL_FILES.get(self.config.model_variant, MODEL_FILES[MODEL_FL2VA])
+
         # 1. 模型加载
         model_id = self._next_id()
         nodes[model_id] = {
             "class_type": "UNETLoader",
             "inputs": {
-                "unet_name": "MiniMaxH3.safetensors",
+                "unet_name": model_file,
                 "weight_dtype": "bfloat16",
             }
         }
@@ -491,6 +551,106 @@ class MiniMaxH3WorkflowBuilder:
 
         return workflow
 
+    def build_reference_to_video(self, prompt: str,
+                                   reference_images: List[str],
+                                   reference_videos: List[str],
+                                   reference_audios: List[str],
+                                   width: int = 1344, height: int = 768,
+                                   frames: int = 81) -> Dict[str, Any]:
+        """
+        构建参考驱动生视频工作流（Ref2VA模式）
+        支持最多9张图像 + 3段视频 + 3段音频参考
+
+        Args:
+            prompt: 提示词
+            reference_images: 参考图像路径列表
+            reference_videos: 参考视频路径列表
+            reference_audios: 参考音频路径列表
+            width: 宽度
+            height: 高度
+            frames: 帧数
+
+        Returns:
+            ComfyUI工作流字典
+        """
+        workflow = {}
+        base = self._base_nodes()
+        workflow.update(base["nodes"])
+
+        output_prefix = f"h3_ref2v_{int(time.time())}"
+
+        # 加载参考图像（最多9张）
+        ref_image_ids = []
+        for i, img_path in enumerate(reference_images[:9]):
+            img_id = self._next_id()
+            workflow[img_id] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": os.path.basename(img_path)}
+            }
+            ref_image_ids.append(img_id)
+
+        # 加载参考视频（最多3段）
+        ref_video_ids = []
+        for i, vid_path in enumerate(reference_videos[:3]):
+            vid_id = self._next_id()
+            workflow[vid_id] = {
+                "class_type": "Load Video",
+                "inputs": {"video": os.path.basename(vid_path)}
+            }
+            ref_video_ids.append(vid_id)
+
+        # 加载参考音频（最多3段）
+        ref_audio_ids = []
+        for i, aud_path in enumerate(reference_audios[:3]):
+            aud_id = self._next_id()
+            workflow[aud_id] = {
+                "class_type": "Load Audio",
+                "inputs": {"audio": os.path.basename(aud_path)}
+            }
+            ref_audio_ids.append(aud_id)
+
+        # 参考驱动生视频节点（Ref2VA）
+        ref2v_inputs = {
+            "model": [base["model"], 0],
+            "clip": [base["clip"], 0],
+            "vae": [base["vae"], 0],
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "num_frames": frames,
+        }
+
+        # 连接参考输入
+        if ref_image_ids:
+            ref2v_inputs["reference_images"] = [ref_image_ids[0], 0]
+        if ref_video_ids:
+            ref2v_inputs["reference_videos"] = [ref_video_ids[0], 0]
+        if ref_audio_ids:
+            ref2v_inputs["reference_audios"] = [ref_audio_ids[0], 0]
+
+        ref2v_id = self._next_id()
+        workflow[ref2v_id] = {
+            "class_type": "Reference to Video (MiniMax H3)",
+            "inputs": ref2v_inputs
+        }
+
+        # 随机噪声
+        noise_id = self._next_id()
+        workflow[noise_id] = {
+            "class_type": "RandomNoise",
+            "inputs": {"noise_seed": int(time.time()) % (2**31)}
+        }
+
+        # 采样
+        sample_out, sample_nodes = self._sampling_nodes(base["model"], ref2v_id, noise_id)
+        workflow.update(sample_nodes)
+
+        # 解码和保存
+        decode_nodes = self._decode_and_save_nodes(base["vae"], sample_out, output_prefix)
+        workflow.update(decode_nodes)
+
+        return workflow
+
 
 # ============ 执行器 ============
 
@@ -581,6 +741,44 @@ class MiniMaxH3Runner:
         """
         workflow = self.builder.build_first_last_to_video(
             prompt, first_frame_path, last_frame_path, width, height, frames
+        )
+        return self._execute(workflow, timeout)
+
+    def reference_to_video(self, prompt: str,
+                            reference_images: List[str] = None,
+                            reference_videos: List[str] = None,
+                            reference_audios: List[str] = None,
+                            width: int = 1344, height: int = 768,
+                            frames: int = 81, timeout: int = 600) -> Optional[str]:
+        """
+        参考驱动生视频（Ref2VA模式）
+        支持最多9张图像 + 3段视频 + 3段音频参考，支持唇形同步
+
+        Args:
+            prompt: 提示词
+            reference_images: 参考图像路径列表（最多9张）
+            reference_videos: 参考视频路径列表（最多3段，每段2-15秒）
+            reference_audios: 参考音频路径列表（最多3段，须与图像/视频一同输入）
+            width: 宽度
+            height: 高度
+            frames: 帧数
+            timeout: 超时时间
+
+        Returns:
+            输出视频路径，失败返回None
+
+        Note:
+            此方法需要Ref2VA或Hybrid版本模型，FL2VA不支持参考驱动
+        """
+        if self.config.model_variant == MODEL_FL2VA:
+            logger.warning("FL2VA版本不支持参考驱动生成，自动切换为图生视频（首帧参考）")
+            if reference_images and len(reference_images) > 0:
+                return self.image_to_video(prompt, reference_images[0], width, height, frames, timeout)
+            return self.text_to_video(prompt, width, height, frames, timeout)
+
+        workflow = self.builder.build_reference_to_video(
+            prompt, reference_images or [], reference_videos or [],
+            reference_audios or [], width, height, frames
         )
         return self._execute(workflow, timeout)
 
