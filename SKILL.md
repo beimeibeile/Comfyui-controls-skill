@@ -34,15 +34,32 @@ metadata:
 
 > **ComfyUI 智能管理与控制框架** —— 让 ComfyUI 从工具变成自动出产品的智能体。工作流管理 + 模型进化 + 批量生成 + 质量控制，全链路自动化。
 
-## 姊妹项目
+## 姊妹项目（8姊妹skill）
 
-| 项目 | 定位 | 状态 |
+| 项目 | 定位 | 角色 |
 |------|------|------|
-| **ai-video-editor** | AI视频剪辑框架（ComfyUI算力 + 剪映合成 + Blender特效） | ✅ 活跃 |
-| **anysearch-skill** | 深度搜索技能（23垂类领域 + 结构化输出） | ✅ 活跃 |
-| **Comfyui-controls-skill** | ComfyUI智能管理与控制（本项目） | 🚀 建设中 |
+| **ai-video-editor** | AI视频剪辑框架（大脑/集成平台） | 🚢 航空母舰 |
+| **jianying-editor** | 剪映工程控制 | ✂️ 剪辑底层 |
+| **Pr-controls-skill** | Pr工程控制 | 🎬 专业剪辑 |
+| **Ps-controls-skill** | Photoshop控制 | 🖼️ 图像处理 |
+| **Comfyui-controls-skill** | ComfyUI智能管理（本项目） | 🚀 AI算力 |
+| **Blender-controls-skill** | Blender智能管理 | 🎨 3D特效 |
+| **remotion-controls-skill** | Remotion代码动画 | 💻 代码动画 |
+| **anysearch-skill** | 深度搜索 | 📡 情报搜索 |
 
-> 三项目更新须同步，核心能力可互相调用。
+> 单体都能干活，任意组合互相增强。能力注册中心v3.2统一调度，智能路由选择最佳skill。
+
+## 核心能力（模块下沉后）
+
+本skill已接收ai-video-editor下沉的15个AI算力相关模块，具备完整独立工作能力：
+
+- **TTS语音合成**：tts_executor（Qwen3-TTS，9种音色+情绪控制+克隆）
+- **图像生成**：comfyui_executor（文生图/图生图/批量生成）
+- **抠图工具**：remove_background（通用抠图v2.0）、fast_remove_bg
+- **视频生成**：hyperframes_executor、hyperframes_text_animator
+- **音频生成**：stable_audio_runner
+- **素材生成**：generate_doubao_avatar、comfyui_e2e_validator
+- **API封装**：comfy_client（统一ComfyUI API调用）
 
 ## 核心能力
 
