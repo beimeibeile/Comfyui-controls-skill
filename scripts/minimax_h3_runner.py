@@ -57,10 +57,17 @@ MODEL_HYBRID = "hybrid"
 
 # 模型文件名映射（ComfyUI models/diffusion_models/ 目录下）
 MODEL_FILES = {
-    MODEL_FL2VA: "MiniMaxH3_fl2va.safetensors",
-    MODEL_REF2VA: "MiniMaxH3_ref2va.safetensors",
-    MODEL_HYBRID: "MiniMaxH3_hybrid.safetensors",
+    MODEL_FL2VA: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    MODEL_REF2VA: "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    MODEL_HYBRID: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
 }
+
+# CLIP文本编码器
+CLIP_FILE = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+
+# VAE文件
+VIDEO_VAE_FILE = "minimax_h3_video_vae_fp16.safetensors"
+AUDIO_VAE_FILE = "minimax_h3_audio_vae_fp32.safetensors"
 
 # 各版本支持的模式
 MODEL_MODES = {
@@ -194,7 +201,7 @@ class MiniMaxH3WorkflowBuilder:
             "class_type": "UNETLoader",
             "inputs": {
                 "unet_name": model_file,
-                "weight_dtype": "bfloat16",
+                "weight_dtype": "default",
             }
         }
 
@@ -203,17 +210,26 @@ class MiniMaxH3WorkflowBuilder:
         nodes[clip_id] = {
             "class_type": "CLIPLoader",
             "inputs": {
-                "clip_name": "MiniMaxH3_text_encoder.safetensors",
-                "type": "sd3",
+                "clip_name": CLIP_FILE,
+                "type": "minimax",
             }
         }
 
-        # 3. VAE加载
+        # 3. 视频VAE加载
         vae_id = self._next_id()
         nodes[vae_id] = {
             "class_type": "VAELoader",
             "inputs": {
-                "vae_name": "MiniMaxH3_video_vae.safetensors",
+                "vae_name": VIDEO_VAE_FILE,
+            }
+        }
+
+        # 4. 音频VAE加载
+        audio_vae_id = self._next_id()
+        nodes[audio_vae_id] = {
+            "class_type": "VAELoader",
+            "inputs": {
+                "vae_name": AUDIO_VAE_FILE,
             }
         }
 
@@ -223,7 +239,7 @@ class MiniMaxH3WorkflowBuilder:
         if self.config.use_mem_eff_attention:
             mem_eff_id = self._next_id()
             nodes[mem_eff_id] = {
-                "class_type": "MiniMax H3 Mem Eff Sage Attention Patch",
+                "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
                 "inputs": {
                     "model": [current_model, 0],
                 }
@@ -247,12 +263,21 @@ class MiniMaxH3WorkflowBuilder:
             "model": current_model,
             "clip": clip_id,
             "vae": vae_id,
+            "audio_vae": audio_vae_id,
             "nodes": nodes,
         }
 
     def _sampling_nodes(self, model_id: str, positive_id: str, latent_id: str,
-                         steps: int = None) -> Tuple[str, Dict[str, Any]]:
-        """构建采样节点"""
+                         noise_id: str, steps: int = None) -> Tuple[str, Dict[str, Any]]:
+        """构建采样节点
+
+        Args:
+            model_id: 模型节点ID
+            positive_id: positive conditioning节点ID（MiniMaxH3ImageToVideo输出index0）
+            latent_id: latent节点ID（MiniMaxH3ImageToVideo输出index1）
+            noise_id: 噪声节点ID（RandomNoise输出）
+            steps: 采样步数
+        """
         nodes = {}
         s = steps or (self.config.turbo_steps if self.config.use_turbo_lora else self.config.standard_steps)
 
@@ -280,6 +305,7 @@ class MiniMaxH3WorkflowBuilder:
         nodes[sched_id] = {
             "class_type": "BasicScheduler",
             "inputs": {
+                "model": [model_id, 0],
                 "scheduler": self.config.scheduler,
                 "steps": s,
                 "denoise": 1.0,
@@ -291,17 +317,17 @@ class MiniMaxH3WorkflowBuilder:
         nodes[custom_sampler_id] = {
             "class_type": "SamplerCustomAdvanced",
             "inputs": {
-                "noise": [latent_id, 0],
+                "noise": [noise_id, 0],
                 "guider": [guid_id, 0],
                 "sampler": [ksampler_id, 0],
                 "sigmas": [sched_id, 0],
-                "latent_image": [latent_id, 0],
+                "latent_image": [latent_id, 1],
             }
         }
 
         return custom_sampler_id, nodes
 
-    def _decode_and_save_nodes(self, vae_id: str, latent_id: str,
+    def _decode_and_save_nodes(self, vae_id: str, audio_vae_id: str, latent_id: str,
                                 output_prefix: str = "h3_video") -> Dict[str, Any]:
         """构建VAE解码和视频保存节点"""
         nodes = {}
@@ -310,14 +336,14 @@ class MiniMaxH3WorkflowBuilder:
             # 分块VAE解码（视频）
             decode_id = self._next_id()
             nodes[decode_id] = {
-                "class_type": "VAEDecode",
+                "class_type": "VAEDecodeTiled",
                 "inputs": {
                     "samples": [latent_id, 0],
                     "vae": [vae_id, 0],
                     "tile_size": self.config.vae_tile_size,
                     "overlap": self.config.vae_overlap,
-                    "time_size": self.config.vae_time_size,
-                    "time_overlap": self.config.vae_time_overlap,
+                    "temporal_size": self.config.vae_time_size,
+                    "temporal_overlap": self.config.vae_time_overlap,
                 }
             }
         else:
@@ -330,25 +356,37 @@ class MiniMaxH3WorkflowBuilder:
                 }
             }
 
-        # 音频VAE解码
+        # 音频VAE解码（使用音频VAE，输出AUDIO类型）
         audio_decode_id = self._next_id()
         nodes[audio_decode_id] = {
-            "class_type": "VAEDecode",
+            "class_type": "VAEDecodeAudio",
             "inputs": {
                 "samples": [latent_id, 0],
-                "vae": [vae_id, 0],
+                "vae": [audio_vae_id, 0],
             }
         }
 
         # 创建视频
         video_id = self._next_id()
         nodes[video_id] = {
-            "class_type": "Create Video",
+            "class_type": "CreateVideo",
             "inputs": {
                 "images": [decode_id, 0],
                 "audio": [audio_decode_id, 0],
                 "fps": self.config.video_fps,
                 "bit_depth": self.config.video_bit_depth,
+            }
+        }
+
+        # 保存视频（输出节点）
+        save_id = self._next_id()
+        nodes[save_id] = {
+            "class_type": "SaveVideo",
+            "inputs": {
+                "video": [video_id, 0],
+                "filename_prefix": output_prefix,
+                "format": "auto",
+                "codec": "auto",
             }
         }
 
@@ -373,18 +411,17 @@ class MiniMaxH3WorkflowBuilder:
         base = self._base_nodes()
         workflow = base["nodes"]
 
-        # 文生视频节点
+        # 文生视频节点（使用MiniMaxH3ImageToVideo，不传首帧即为文生视频）
         t2v_id = self._next_id()
         workflow[t2v_id] = {
-            "class_type": "Text to Video (MiniMax H3)",
+            "class_type": "MiniMaxH3ImageToVideo",
             "inputs": {
-                "model": [base["model"], 0],
                 "clip": [base["clip"], 0],
                 "vae": [base["vae"], 0],
                 "prompt": prompt,
                 "width": width,
                 "height": height,
-                "num_frames": frames,
+                "length": frames,
             }
         }
 
@@ -397,14 +434,14 @@ class MiniMaxH3WorkflowBuilder:
             }
         }
 
-        # 采样
+        # 采样（t2v_id输出index0=positive, index1=latent）
         sample_out, sample_nodes = self._sampling_nodes(
-            base["model"], t2v_id, noise_id
+            base["model"], t2v_id, t2v_id, noise_id
         )
         workflow.update(sample_nodes)
 
         # 解码和保存
-        decode_nodes = self._decode_and_save_nodes(base["vae"], sample_out, output_prefix)
+        decode_nodes = self._decode_and_save_nodes(base["vae"], base["audio_vae"], sample_out, output_prefix)
         workflow.update(decode_nodes)
 
         return workflow
@@ -442,16 +479,15 @@ class MiniMaxH3WorkflowBuilder:
         # 图生视频节点
         i2v_id = self._next_id()
         workflow[i2v_id] = {
-            "class_type": "Image to Video (MiniMax H3)",
+            "class_type": "MiniMaxH3ImageToVideo",
             "inputs": {
-                "model": [base["model"], 0],
                 "clip": [base["clip"], 0],
                 "vae": [base["vae"], 0],
                 "first_frame": [img_id, 0],
                 "prompt": prompt,
                 "width": width,
                 "height": height,
-                "num_frames": frames,
+                "length": frames,
             }
         }
 
@@ -464,12 +500,14 @@ class MiniMaxH3WorkflowBuilder:
             }
         }
 
-        # 采样
-        sample_out, sample_nodes = self._sampling_nodes(base["model"], i2v_id, noise_id)
+        # 采样（i2v_id输出index0=positive, index1=latent）
+        sample_out, sample_nodes = self._sampling_nodes(
+            base["model"], i2v_id, i2v_id, noise_id
+        )
         workflow.update(sample_nodes)
 
         # 解码和保存
-        decode_nodes = self._decode_and_save_nodes(base["vae"], sample_out, output_prefix)
+        decode_nodes = self._decode_and_save_nodes(base["vae"], base["audio_vae"], sample_out, output_prefix)
         workflow.update(decode_nodes)
 
         return workflow
@@ -518,9 +556,8 @@ class MiniMaxH3WorkflowBuilder:
         # 首尾帧生视频节点
         fl2v_id = self._next_id()
         workflow[fl2v_id] = {
-            "class_type": "Image to Video (MiniMax H3)",
+            "class_type": "MiniMaxH3ImageToVideo",
             "inputs": {
-                "model": [base["model"], 0],
                 "clip": [base["clip"], 0],
                 "vae": [base["vae"], 0],
                 "first_frame": [first_id, 0],
@@ -528,7 +565,7 @@ class MiniMaxH3WorkflowBuilder:
                 "prompt": prompt,
                 "width": width,
                 "height": height,
-                "num_frames": frames,
+                "length": frames,
             }
         }
 
@@ -541,12 +578,14 @@ class MiniMaxH3WorkflowBuilder:
             }
         }
 
-        # 采样
-        sample_out, sample_nodes = self._sampling_nodes(base["model"], fl2v_id, noise_id)
+        # 采样（fl2v_id输出index0=positive, index1=latent）
+        sample_out, sample_nodes = self._sampling_nodes(
+            base["model"], fl2v_id, fl2v_id, noise_id
+        )
         workflow.update(sample_nodes)
 
         # 解码和保存
-        decode_nodes = self._decode_and_save_nodes(base["vae"], sample_out, output_prefix)
+        decode_nodes = self._decode_and_save_nodes(base["vae"], base["audio_vae"], sample_out, output_prefix)
         workflow.update(decode_nodes)
 
         return workflow
@@ -611,26 +650,30 @@ class MiniMaxH3WorkflowBuilder:
 
         # 参考驱动生视频节点（Ref2VA）
         ref2v_inputs = {
-            "model": [base["model"], 0],
             "clip": [base["clip"], 0],
             "vae": [base["vae"], 0],
+            "audio_vae": [base["vae"], 0],
             "prompt": prompt,
             "width": width,
             "height": height,
-            "num_frames": frames,
+            "length": frames,
         }
 
-        # 连接参考输入
-        if ref_image_ids:
-            ref2v_inputs["reference_images"] = [ref_image_ids[0], 0]
-        if ref_video_ids:
-            ref2v_inputs["reference_videos"] = [ref_video_ids[0], 0]
-        if ref_audio_ids:
-            ref2v_inputs["reference_audios"] = [ref_audio_ids[0], 0]
+        # 连接参考图像（Autogrow输入：ref_image_0, ref_image_1, ...）
+        for i, img_id in enumerate(ref_image_ids):
+            ref2v_inputs[f"ref_image_{i}"] = [img_id, 0]
+
+        # 连接参考视频（Autogrow输入：ref_video_0, ref_video_1, ...）
+        for i, vid_id in enumerate(ref_video_ids):
+            ref2v_inputs[f"ref_video_{i}"] = [vid_id, 0]
+
+        # 连接独立参考音频（Autogrow输入：ref_audio_0, ref_audio_1, ...）
+        for i, aud_id in enumerate(ref_audio_ids):
+            ref2v_inputs[f"ref_audio_{i}"] = [aud_id, 0]
 
         ref2v_id = self._next_id()
         workflow[ref2v_id] = {
-            "class_type": "Reference to Video (MiniMax H3)",
+            "class_type": "MiniMaxH3ReferenceToVideo",
             "inputs": ref2v_inputs
         }
 
@@ -641,12 +684,14 @@ class MiniMaxH3WorkflowBuilder:
             "inputs": {"noise_seed": int(time.time()) % (2**31)}
         }
 
-        # 采样
-        sample_out, sample_nodes = self._sampling_nodes(base["model"], ref2v_id, noise_id)
+        # 采样（ref2v_id输出index0=positive, index1=latent）
+        sample_out, sample_nodes = self._sampling_nodes(
+            base["model"], ref2v_id, ref2v_id, noise_id
+        )
         workflow.update(sample_nodes)
 
         # 解码和保存
-        decode_nodes = self._decode_and_save_nodes(base["vae"], sample_out, output_prefix)
+        decode_nodes = self._decode_and_save_nodes(base["vae"], base["audio_vae"], sample_out, output_prefix)
         workflow.update(decode_nodes)
 
         return workflow
@@ -794,20 +839,39 @@ class MiniMaxH3Runner:
             logger.info(f"工作流已提交，prompt_id={prompt_id}")
 
             # 等待完成
-            result = self.client.wait_for_completion(prompt_id, timeout=timeout)
-            if not result:
+            history = self.client.wait_for_completion(prompt_id, timeout=timeout)
+            if not history:
                 logger.error("工作流执行超时或失败")
                 return None
 
-            # 获取输出
-            outputs = self.client.get_outputs(prompt_id)
+            # 从history中获取输出
+            outputs = history.get("outputs", {})
             if outputs:
                 for node_id, output in outputs.items():
-                    if "videos" in output:
-                        for video in output["videos"]:
-                            video_path = os.path.join(self.output_dir, video.get("filename", ""))
-                            logger.info(f"视频已生成: {video_path}")
-                            return video_path
+                    # SaveVideo节点输出格式为 "images" + "animated: [True]"
+                    if "images" in output and output.get("animated", [False])[0]:
+                        for video in output["images"]:
+                            filename = video.get("filename", "")
+                            subfolder = video.get("subfolder", "")
+                            # ComfyUI output目录
+                            comfy_output = r"D:\Ai\ComfyUI-aki-v3.2\ComfyUI\output"
+                            if subfolder:
+                                src_path = os.path.join(comfy_output, subfolder, filename)
+                            else:
+                                src_path = os.path.join(comfy_output, filename)
+
+                            if os.path.exists(src_path):
+                                # 复制到runner的output_dir
+                                os.makedirs(self.output_dir, exist_ok=True)
+                                dst_path = os.path.join(self.output_dir, filename)
+                                import shutil
+                                shutil.copy2(src_path, dst_path)
+                                logger.info(f"视频已生成: {dst_path}")
+                                return dst_path
+                            else:
+                                logger.warning(f"视频文件不存在: {src_path}")
+                                # 尝试直接返回ComfyUI中的路径
+                                return src_path
 
             logger.warning("未找到视频输出")
             return None
