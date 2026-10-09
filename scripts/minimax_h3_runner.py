@@ -762,7 +762,9 @@ class MiniMaxH3Runner:
         Returns:
             输出视频路径
         """
-        workflow = self.builder.build_image_to_video(prompt, image_path, width, height, frames)
+        # 先上传图片到ComfyUI
+        uploaded = self._upload_image(image_path)
+        workflow = self.builder.build_image_to_video(prompt, uploaded, width, height, frames)
         return self._execute(workflow, timeout)
 
     def first_last_to_video(self, prompt: str, first_frame_path: str,
@@ -784,8 +786,11 @@ class MiniMaxH3Runner:
         Returns:
             输出视频路径
         """
+        # 先上传图片到ComfyUI
+        first_uploaded = self._upload_image(first_frame_path)
+        last_uploaded = self._upload_image(last_frame_path)
         workflow = self.builder.build_first_last_to_video(
-            prompt, first_frame_path, last_frame_path, width, height, frames
+            prompt, first_uploaded, last_uploaded, width, height, frames
         )
         return self._execute(workflow, timeout)
 
@@ -821,11 +826,26 @@ class MiniMaxH3Runner:
                 return self.image_to_video(prompt, reference_images[0], width, height, frames, timeout)
             return self.text_to_video(prompt, width, height, frames, timeout)
 
+        # 上传参考图片到ComfyUI
+        uploaded_images = [self._upload_image(p) for p in (reference_images or [])]
         workflow = self.builder.build_reference_to_video(
-            prompt, reference_images or [], reference_videos or [],
+            prompt, uploaded_images, reference_videos or [],
             reference_audios or [], width, height, frames
         )
         return self._execute(workflow, timeout)
+
+    def _upload_image(self, image_path: str) -> str:
+        """上传图片到ComfyUI，返回ComfyUI可识别的文件名"""
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"图片不存在: {image_path}")
+        try:
+            result = self.client.upload_image(image_path)
+            filename = result.get("name", os.path.basename(image_path))
+            logger.info(f"图片已上传到ComfyUI: {filename}")
+            return filename
+        except Exception as e:
+            logger.warning(f"上传图片失败，使用文件名: {e}")
+            return os.path.basename(image_path)
 
     def _execute(self, workflow: Dict[str, Any], timeout: int = 600) -> Optional[str]:
         """执行工作流并等待结果"""
