@@ -1,0 +1,52 @@
+{
+  "version": "1.0.0",
+  "created_at": "2026-10-16T00:00:00",
+  "updated_at": "2026-10-16T13:32:00.860083",
+  "knowledge_domains": [
+    "minimax_h3"
+  ],
+  "total_entries": 5,
+  "learning_records": 1,
+  "changelog": [
+    {
+      "action": "init",
+      "description": "知识管理模块初始化，建立 minimax_h3 专项知识库",
+      "time": "2026-10-16T00:00:00"
+    },
+    {
+      "action": "add",
+      "domain": "minimax_h3",
+      "title": "architecture",
+      "source": "official",
+      "time": "2026-10-16T00:00:00"
+    },
+    {
+      "action": "add",
+      "domain": "minimax_h3",
+      "title": "prompt_guide_base",
+      "source": "official",
+      "time": "2026-10-16T00:00:00"
+    },
+    {
+      "action": "add",
+      "domain": "minimax_h3",
+      "title": "prompt_guide_ref",
+      "source": "official",
+      "time": "2026-10-16T00:00:00"
+    },
+    {
+      "action": "add",
+      "domain": "minimax_h3",
+      "title": "best_practices",
+      "source": "learned",
+      "time": "2026-10-16T00:00:00"
+    },
+    {
+      "action": "add",
+      "domain": "minimax_h3",
+      "title": "troubleshooting",
+      "source": "learned",
+      "time": "2026-10-16T00:00:00"
+    }
+  ]
+}

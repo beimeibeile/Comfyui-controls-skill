@@ -60,6 +60,8 @@ mindmap
 | **自我学习进化** | 从生成结果中学习优化参数、积累最佳实践 |
 | **算力监控** | GPU使用监控、队列管理、资源调度 |
 | **环境自适应** | 自动检测ComfyUI版本、可用模型、插件状态 |
+| **知识管理模块** | 结构化知识库、学习记录沉淀、关键词检索、版本管理、自进化 |
+| **H3 Prompt引擎** | 集成MiniMax-H3官方Prompt Writing Skill，5种模式自动生成规范prompt |
 
 ## 快速开始
 
@@ -96,13 +98,26 @@ Comfyui-controls-skill/
 │   ├── cap_quality_control/       # 质量控制
 │   ├── cap_api_wrapper/           # API封装
 │   └── cap_self_evolution/        # 自我进化
+├── knowledge/                 # 知识管理模块（v1.1.0）
+│   ├── knowledge_manager.py       # 知识管理引擎
+│   ├── prompt_engineer.py         # H3 Prompt生成引擎
+│   ├── knowledge_base/            # 知识库（minimax_h3等专项）
+│   ├── versions/                  # 版本管理
+│   └── learning_logs/             # 学习记录
 ├── workflows/                 # 工作流模板库
-├── knowledge/                 # 知识库（自学习）
 ├── scripts/                   # 工具脚本
 ├── utils/                     # 工具函数
+├── docs/                      # 开发文档
 ├── SKILL.md                   # 技能定义
 └── README.md                  # 项目说明
 ```
+
+## 版本历史
+
+| 版本 | 日期 | 变更 |
+|------|------|------|
+| v1.1.0 | 2026-10-16 | 新增知识管理模块；集成MiniMax-H3官方Prompt Writing Skill为H3PromptEngineer；建立minimax_h3专项知识库（架构/指南/最佳实践/故障排除） |
+| v1.0.0 | - | 初始版本，工作流管理+模型进化+批量生成+质量控制 |
 
 ## License
 

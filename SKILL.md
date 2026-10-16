@@ -1,11 +1,13 @@
 ﻿---
 name: comfyui-controls-skill
-version: 1.0.0
+version: 1.1.0
 description: |
   ComfyUI 智能管理与控制技能。核心能力：工作流智能管理、模型自动进化、批量出产品、
-  质量门控制、API统一封装、自我学习进化。与 ai-video-editor、anysearch-skill 为姊妹项目，
+  质量门控制、API统一封装、自我学习进化、知识管理模块（含MiniMax-H3专项知识库与
+  Prompt Writing Skill引擎）。与 ai-video-editor、anysearch-skill 为姊妹项目，
   三项目更新须同步。
-  Use when asked to 管理ComfyUI、控制ComfyUI、ComfyUI工作流、批量生成、模型管理、ComfyUI自动化。
+  Use when asked to 管理ComfyUI、控制ComfyUI、ComfyUI工作流、批量生成、模型管理、ComfyUI自动化、
+  H3视频生成、知识管理、prompt优化。
 allowed-tools:
   - Read
   - Write
@@ -60,6 +62,7 @@ metadata:
 - **音频生成**：stable_audio_runner
 - **素材生成**：generate_doubao_avatar、comfyui_e2e_validator
 - **API封装**：comfy_client（统一ComfyUI API调用）
+- **知识管理模块**（v1.1.0新增）：knowledge_manager（知识库管理/学习记录/自进化/版本管理）、prompt_engineer（H3 Prompt生成引擎，集成官方Prompt Writing Skill，支持T2VA/I2VA/FL2VA/L2VA/Ref2VA五种模式）
 
 ## 核心能力
 
@@ -73,6 +76,8 @@ metadata:
 | **自我学习进化** | 从生成结果中学习优化参数、积累最佳实践 |
 | **算力监控** | GPU使用监控、队列管理、资源调度 |
 | **环境自适应** | 自动检测ComfyUI版本、可用模型、插件状态 |
+| **知识管理模块** | 结构化知识库、学习记录沉淀、关键词检索、版本管理、自进化最佳实践 |
+| **H3 Prompt引擎** | 集成MiniMax-H3官方Prompt Writing Skill，5种模式自动生成符合规范的prompt |
 
 ## 快速开始
 
@@ -109,10 +114,23 @@ Comfyui-controls-skill/
 │   ├── cap_quality_control/       # 质量控制
 │   ├── cap_api_wrapper/           # API封装
 │   └── cap_self_evolution/        # 自我进化
+├── knowledge/                 # 知识管理模块（v1.1.0新增）
+│   ├── __init__.py
+│   ├── knowledge_manager.py       # 知识管理引擎（学习/检索/进化/版本管理）
+│   ├── prompt_engineer.py         # H3 Prompt生成引擎（5种模式）
+│   ├── knowledge_base/            # 知识库
+│   │   └── minimax_h3/            # MiniMax-H3专项知识
+│   │       ├── architecture.md        # H3系统架构
+│   │       ├── prompt_guide_base.md   # T2VA/I2VA/FL2VA/L2VA指南
+│   │       ├── prompt_guide_ref.md    # Ref2VA全参考指南
+│   │       ├── best_practices.md      # 最佳实践（含实战经验）
+│   │       └── troubleshooting.md     # 故障排除
+│   ├── versions/                  # 知识库版本管理
+│   └── learning_logs/             # 学习记录
 ├── workflows/                 # 工作流模板库
-├── knowledge/                 # 知识库（自学习）
 ├── scripts/                   # 工具脚本
 ├── utils/                     # 工具函数
+├── docs/                      # 开发文档
 ├── SKILL.md                   # 本文件
 └── README.md                  # 项目说明
 ```
@@ -154,6 +172,57 @@ wm = WorkflowManager()
 wm.list_workflows()            # 列出工作流
 wm.run("text_to_image", {"prompt": "一只猫"})
 wm.optimize("text_to_image")   # 自动优化工作流参数
+```
+
+### 4. 知识管理模块（v1.1.0）
+
+```python
+from knowledge import KnowledgeManager
+
+km = KnowledgeManager()
+# 检索知识库
+results = km.search_knowledge("H3 prompt camera motion", domain="minimax_h3")
+# 记录学习经验
+km.record_learning("h3_generation", "success", "Sage Attention Patch解决显存溢出",
+                   model="minimax_h3", params={"resolution": "0.7MP"})
+# 查看状态
+status = km.get_status()
+```
+
+### 5. H3 Prompt生成引擎（v1.1.0，集成官方Prompt Writing Skill）
+
+```python
+from knowledge import H3PromptEngineer
+
+engine = H3PromptEngineer()
+
+# 构建镜头
+shots = [
+    engine.build_shot(1,
+        style="Live-action, cinematic",
+        shot_size="medium-wide shot",
+        subjects="a man with a deep voice (S1)",
+        action="walks through a forest",
+        dialogue={"speaker_id": "S1", "voice_desc": "deep, calm",
+                  "language": "Chinese", "text": "这里妖气很重。"},
+        camera_motion=engine.build_camera_motion("tracking", "small", "slow")
+    ),
+    engine.build_shot(2, cut_time="00:04.000", shot_size="close-up",
+                      action="his eyes scan cautiously"),
+]
+
+# 生成5种模式的prompt
+prompt = engine.generate_t2va(shots,
+    overall_soundscape="Forest ambience with footsteps.",
+    non_diegetic_music="Low strings at slow tempo.")
+# 也支持 generate_i2va / generate_fl2va / generate_l2va / generate_ref2va
+
+# 从分镜表批量生成
+prompt = engine.generate_from_storyboard(storyboard_list, mode="t2va",
+    duration=5.0, overall_soundscape="...", non_diegetic_music="...")
+
+# 校验prompt规范
+result = engine.validate_prompt(prompt, mode="base")
 ```
 
 ## 配置说明
